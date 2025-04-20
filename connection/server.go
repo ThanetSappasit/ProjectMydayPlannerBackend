@@ -1,6 +1,7 @@
 package connection
 
 import (
+	"backend/controller/user"
 	"log"
 
 	"github.com/gin-gonic/gin"
@@ -9,11 +10,11 @@ import (
 func StartServer() {
 	router := gin.Default()
 
-	_, err := DBConnection()
+	db, err := DBConnection()
 	if err != nil {
 		log.Fatalf("Failed to connect to database: %v", err)
 	}
-	_, err = InitFirestoreClient()
+	firestoreClient, err := InitFirestoreClient()
 	if err != nil {
 		log.Fatalf("Failed to initialize Firestore client: %v", err)
 	}
@@ -21,6 +22,8 @@ func StartServer() {
 	router.GET("/status", func(c *gin.Context) {
 		c.JSON(200, gin.H{"message": "Api is running!"})
 	})
+
+	user.UserController(router, db, firestoreClient)
 
 	router.Run()
 }
