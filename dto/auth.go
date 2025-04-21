@@ -14,6 +14,13 @@ type SigninRequest struct {
 	Email          string `json:"email" binding:"required"`
 	HashedPassword string `json:"hashed_password"`
 }
+
 type SignoutRequest struct {
 	Email string `json:"email" binding:"required"`
+}
+
+type GoogleSignInRequest struct {
+	Email   string `json:"email" binding:"required"`
+	Name    string `json:"name"`
+	Profile string `json:"profile"`
 }

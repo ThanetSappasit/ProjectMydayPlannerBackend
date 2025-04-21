@@ -15,18 +15,18 @@ func UserSignController(router *gin.Engine, db *gorm.DB, firestoreClient *firest
 	routes := router.Group("/auth")
 	{
 		routes.POST("/signin", func(c *gin.Context) {
-			Signin(c, db, firestoreClient)
+			SignIn(c, db, firestoreClient)
 		})
 		routes.POST("/signout", func(c *gin.Context) {
-			Signout(c, db, firestoreClient)
+			SignOut(c, db, firestoreClient)
 		})
-		// routes.POST("/verifyOTP", func(c *gin.Context) {
-		// 	VerifyOTP(c, db, firestoreClient)
-		// })
+		routes.POST("/googlesignin", func(c *gin.Context) {
+			googleSignIn(c, db, firestoreClient)
+		})
 	}
 }
 
-func Signin(c *gin.Context, db *gorm.DB, firestoreClient *firestore.Client) {
+func SignIn(c *gin.Context, db *gorm.DB, firestoreClient *firestore.Client) {
 	var signinRequest dto.SigninRequest
 
 	if err := c.ShouldBindJSON(&signinRequest); err != nil {
@@ -101,7 +101,7 @@ func Signin(c *gin.Context, db *gorm.DB, firestoreClient *firestore.Client) {
 	})
 }
 
-func Signout(c *gin.Context, db *gorm.DB, firestoreClient *firestore.Client) {
+func SignOut(c *gin.Context, db *gorm.DB, firestoreClient *firestore.Client) {
 	var signoutRequest dto.SignoutRequest
 
 	if err := c.ShouldBindJSON(&signoutRequest); err != nil {
@@ -127,7 +127,7 @@ func Signout(c *gin.Context, db *gorm.DB, firestoreClient *firestore.Client) {
 	}
 
 	// ลบข้อมูลใน Firebase collection "usersLogin"
-	_, err := firestoreClient.Collection("usersLogin").Doc(signoutRequest.Email).Delete(c)
+	_, err := firestoreClient.Collection("usersLogin").Doc(user.Email).Delete(c)
 	if err != nil {
 		c.JSON(500, gin.H{"error": "Failed to delete Firebase user data: " + err.Error()})
 		return
@@ -139,4 +139,84 @@ func Signout(c *gin.Context, db *gorm.DB, firestoreClient *firestore.Client) {
 		"email":   signoutRequest.Email,
 	})
 
+}
+
+func googleSignIn(c *gin.Context, db *gorm.DB, firestoreClient *firestore.Client) {
+	var googleSignInRequest dto.GoogleSignInRequest
+	if err := c.ShouldBindJSON(&googleSignInRequest); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request"})
+		return
+	}
+
+	// ค้นหาผู้ใช้ในฐานข้อมูล
+	var user model.User
+	result := db.Where("email = ?", googleSignInRequest.Email).First(&user)
+
+	var firebaseData map[string]interface{}
+	role := "user"
+
+	// เงื่อนไขที่ 1: ไม่เจอข้อมูลในระบบ
+	if result.Error != nil {
+		if result.Error == gorm.ErrRecordNotFound {
+			// กรณีไม่พบผู้ใช้ในระบบ
+			// เตรียมข้อมูลสำหรับบันทึกใน Firebase
+			isActive := "1"
+			isVerify := "0"
+
+			firebaseData = map[string]interface{}{
+				"email":  googleSignInRequest.Email,
+				"active": isActive,
+				"verify": isVerify,
+				"login":  0,
+				"role":   role,
+			}
+
+			// บันทึกหรืออัปเดตข้อมูลใน Firebase collection "usersLogin"
+			_, err := firestoreClient.Collection("usersLogin").Doc(googleSignInRequest.Email).Set(c, firebaseData, firestore.MergeAll)
+			if err != nil {
+				c.JSON(500, gin.H{"error": "Failed to update Firebase user data: " + err.Error()})
+				return
+			}
+
+			c.JSON(http.StatusOK, gin.H{
+				"status":  "not_found",
+				"message": "User not found in system but registered in Firebase",
+				"email":   googleSignInRequest.Email,
+			})
+		} else {
+			// กรณีเกิด error อื่นๆ
+			c.JSON(http.StatusInternalServerError, gin.H{"error": result.Error.Error()})
+		}
+		return
+	}
+
+	// เงื่อนไขที่ 2: เจอข้อมูลในระบบ
+	// เตรียมข้อมูลสำหรับบันทึกใน Firebase
+	isActive := "1"
+	isVerify := "1"
+
+	firebaseData = map[string]interface{}{
+		"email":  googleSignInRequest.Email,
+		"active": isActive,
+		"verify": isVerify,
+		"login":  1,
+		"role":   role,
+	}
+
+	// บันทึกหรืออัปเดตข้อมูลใน Firebase collection "usersLogin"
+	_, err := firestoreClient.Collection("usersLogin").Doc(googleSignInRequest.Email).Set(c, firebaseData, firestore.MergeAll)
+	if err != nil {
+		c.JSON(500, gin.H{"error": "Failed to update Firebase user data: " + err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"status":  "success",
+		"message": "Login successful",
+		"user": gin.H{
+			"id":    user.UserID,
+			"email": user.Email,
+			"name":  user.Name,
+		},
+	})
 }
