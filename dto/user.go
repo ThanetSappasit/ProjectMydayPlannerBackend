@@ -23,17 +23,7 @@ type UpdateProfileRequest struct {
 	} `json:"profileData"`
 }
 
-type EmailOTPRequest struct {
-	Email string `json:"email"`
-}
-
 type ResetPasswordRequest struct {
 	Email          string `json:"email"`
 	HashedPassword string `json:"hashed_password"`
-}
-
-type VerifyRequest struct {
-	Email     string `json:"email" binding:"required"`
-	Reference string `json:"ref" binding:"required"`
-	OTP       string `json:"otp" binding:"required"`
 }
