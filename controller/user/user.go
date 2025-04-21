@@ -34,9 +34,6 @@ func UserController(router *gin.Engine, db *gorm.DB, firestoreClient *firestore.
 		routes.PUT("/updateprofile", func(c *gin.Context) {
 			UpdateProfileUser(c, db, firestoreClient)
 		})
-		routes.PUT("/resetpassword", func(c *gin.Context) {
-			ResetPassword(c, db, firestoreClient)
-		})
 	}
 }
 
