@@ -8,6 +8,10 @@ import (
 	"net/smtp"
 	"os"
 	"strings"
+	"time"
+
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 
 	"cloud.google.com/go/firestore"
 	"github.com/gin-gonic/gin"
@@ -18,13 +22,19 @@ import (
 func UserAuthController(router *gin.Engine, db *gorm.DB, firestoreClient *firestore.Client) {
 	routes := router.Group("/user")
 	{
-		routes.POST("/requestOTP", func(c *gin.Context) {
-			RequestOTP(c, db, firestoreClient)
+		routes.POST("/requestresetpassOTP", func(c *gin.Context) {
+			RequestResetpasswordOTP(c, db, firestoreClient)
+		})
+		routes.POST("/requestverifyOTP", func(c *gin.Context) {
+			RequestVerifyOTP(c, db, firestoreClient)
+		})
+		routes.POST("/verifyOTP", func(c *gin.Context) {
+			VerifyOTP(c, db, firestoreClient)
 		})
 	}
 }
 
-func RequestOTP(c *gin.Context, db *gorm.DB, firestoreClient *firestore.Client) {
+func RequestResetpasswordOTP(c *gin.Context, db *gorm.DB, firestoreClient *firestore.Client) {
 	var emailRequest dto.EmailOTPRequest
 	if err := c.ShouldBindJSON(&emailRequest); err != nil {
 		c.JSON(400, gin.H{"error": "Invalid request format"})
@@ -57,10 +67,174 @@ func RequestOTP(c *gin.Context, db *gorm.DB, firestoreClient *firestore.Client) 
 		return
 	}
 
+	expirationTime := time.Now().Add(15 * time.Minute)
+	otpRecord := model.OTPRecord{
+		Email:     emailRequest.Email,
+		OTP:       otp,
+		Reference: ref,
+		CreatedAt: time.Now(),
+		ExpiresAt: expirationTime,
+	}
+	otpData := map[string]interface{}{
+		"email":     otpRecord.Email,
+		"otp":       otpRecord.OTP,
+		"reference": otpRecord.Reference,
+		"createdAt": otpRecord.CreatedAt,
+		"expiresAt": otpRecord.ExpiresAt,
+	}
+
+	_, err = firestoreClient.Collection("OTPRecords").Doc(ref).Set(c, otpData)
+	if err != nil {
+		c.JSON(500, gin.H{"error": "Failed to save OTP record to Firebase: " + err.Error()})
+		return
+	}
+
 	c.JSON(200, gin.H{
 		"message": "OTP has been sent to your email",
-		"otp":     otp,
 		"ref":     ref,
+	})
+}
+
+func RequestVerifyOTP(c *gin.Context, db *gorm.DB, firestoreClient *firestore.Client) {
+	var emailRequest dto.EmailOTPRequest
+	if err := c.ShouldBindJSON(&emailRequest); err != nil {
+		c.JSON(400, gin.H{"error": "Invalid request format"})
+		return
+	}
+
+	// ตรวจสอบว่าอีเมลนี้มีอยู่ในระบบหรือไม่
+	var user model.User
+	result := db.Where("email = ?", emailRequest.Email).First(&user)
+	if result.Error != nil {
+		c.JSON(404, gin.H{"error": "Email not found"})
+		return
+	}
+
+	// สร้าง OTP และ REF
+	otp, err := generateOTP(6)
+	if err != nil {
+		c.JSON(500, gin.H{"error": "Failed to generate OTP"})
+		return
+	}
+	ref := generateREF(10)
+
+	// สร้างเนื้อหาอีเมล
+	emailContent := generateEmailContent(otp, ref)
+
+	// ส่งอีเมล
+	err = sendEmail(emailRequest.Email, "รหัส OTP สำหรับยืนยันตัวตนบัญชีอีเมล", emailContent)
+	if err != nil {
+		c.JSON(500, gin.H{"error": "Failed to send email: " + err.Error()})
+		return
+	}
+
+	expirationTime := time.Now().Add(15 * time.Minute)
+	otpRecord := model.OTPRecord{
+		Email:     emailRequest.Email,
+		OTP:       otp,
+		Reference: ref,
+		CreatedAt: time.Now(),
+		ExpiresAt: expirationTime,
+	}
+	otpData := map[string]interface{}{
+		"email":     otpRecord.Email,
+		"otp":       otpRecord.OTP,
+		"reference": otpRecord.Reference,
+		"createdAt": otpRecord.CreatedAt,
+		"expiresAt": otpRecord.ExpiresAt,
+	}
+
+	_, err = firestoreClient.Collection("OTPRecords").Doc(ref).Set(c, otpData)
+	if err != nil {
+		c.JSON(500, gin.H{"error": "Failed to save OTP record to Firebase: " + err.Error()})
+		return
+	}
+
+	c.JSON(200, gin.H{
+		"message": "OTP has been sent to your email",
+		"ref":     ref,
+	})
+}
+
+func VerifyOTP(c *gin.Context, db *gorm.DB, firestoreClient *firestore.Client) {
+	// รับข้อมูลจาก request
+	var verifyRequest dto.VerifyRequest
+
+	if err := c.ShouldBindJSON(&verifyRequest); err != nil {
+		c.JSON(400, gin.H{"error": "Invalid request format"})
+		return
+	}
+
+	// ดึงข้อมูล OTP จาก Firebase โดยใช้ reference
+	docRef := firestoreClient.Collection("OTPRecords").Doc(verifyRequest.Reference)
+	docSnap, err := docRef.Get(c)
+
+	if err != nil {
+		if status.Code(err) == codes.NotFound {
+			c.JSON(404, gin.H{"error": "Invalid reference code"})
+		} else {
+			c.JSON(500, gin.H{"error": "Failed to retrieve OTP record: " + err.Error()})
+		}
+		return
+	}
+
+	// แปลงข้อมูลจาก Firestore เป็นโครงสร้างข้อมูลที่ใช้งานได้
+	var otpRecord model.OTPRecord
+
+	if err := docSnap.DataTo(&otpRecord); err != nil {
+		c.JSON(500, gin.H{"error": "Failed to parse OTP record"})
+		return
+	}
+
+	// ตรวจสอบว่า OTP หมดอายุหรือยัง
+	currentTime := time.Now()
+	if currentTime.After(otpRecord.ExpiresAt) {
+		c.JSON(400, gin.H{"error": "OTP has expired"})
+		return
+	}
+
+	// ตรวจสอบว่า OTP ตรงกันหรือไม่
+	if otpRecord.OTP != verifyRequest.OTP {
+		c.JSON(400, gin.H{"error": "Invalid OTP"})
+		return
+	}
+
+	// อัปเดตคอลัมน์ is_verify เป็น 1 ในตาราง user ของ SQL database
+	result := db.Model(&model.User{}).Where("email = ?", otpRecord.Email).Update("is_verify", 1)
+
+	if result.Error != nil {
+		c.JSON(500, gin.H{"error": "Failed to update user verification status: " + result.Error.Error()})
+		return
+	}
+
+	if result.RowsAffected == 0 {
+		c.JSON(404, gin.H{"error": "User not found"})
+		return
+	}
+
+	// เตรียมข้อมูลสำหรับบันทึกหรืออัปเดตใน Firebase
+	role := "user"
+	isActive := "1"
+	isVerify := "1"
+
+	firebaseData := map[string]interface{}{
+		"email":  otpRecord.Email,
+		"active": isActive,
+		"verify": isVerify,
+		"login":  1,
+		"role":   role,
+	}
+
+	// บันทึกหรืออัปเดตข้อมูลใน Firebase collection "usersLogin"
+	_, err = firestoreClient.Collection("usersLogin").Doc(otpRecord.Email).Set(c, firebaseData, firestore.MergeAll)
+	if err != nil {
+		c.JSON(500, gin.H{"error": "Failed to update Firebase user data: " + err.Error()})
+		return
+	}
+
+	c.JSON(200, gin.H{
+		"message": "OTP verified successfully",
+		"email":   otpRecord.Email,
 	})
 }
 
