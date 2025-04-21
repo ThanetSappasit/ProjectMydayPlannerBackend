@@ -26,6 +26,7 @@ func StartServer() {
 
 	user.UserController(router, db, firestoreClient)
 	auth.UserAuthController(router, db, firestoreClient)
+	auth.UserSignController(router, db, firestoreClient)
 
 	router.Run()
 }
