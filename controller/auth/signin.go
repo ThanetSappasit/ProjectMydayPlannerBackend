@@ -17,9 +17,9 @@ func UserSignController(router *gin.Engine, db *gorm.DB, firestoreClient *firest
 		routes.POST("/signin", func(c *gin.Context) {
 			Signin(c, db, firestoreClient)
 		})
-		// routes.POST("/requestverifyOTP", func(c *gin.Context) {
-		// 	RequestVerifyOTP(c, db, firestoreClient)
-		// })
+		routes.POST("/signout", func(c *gin.Context) {
+			Signout(c, db, firestoreClient)
+		})
 		// routes.POST("/verifyOTP", func(c *gin.Context) {
 		// 	VerifyOTP(c, db, firestoreClient)
 		// })
@@ -125,4 +125,18 @@ func Signout(c *gin.Context, db *gorm.DB, firestoreClient *firestore.Client) {
 		}
 		return
 	}
+
+	// ลบข้อมูลใน Firebase collection "usersLogin"
+	_, err := firestoreClient.Collection("usersLogin").Doc(signoutRequest.Email).Delete(c)
+	if err != nil {
+		c.JSON(500, gin.H{"error": "Failed to delete Firebase user data: " + err.Error()})
+		return
+	}
+
+	// ส่งการตอบกลับที่สำเร็จ
+	c.JSON(200, gin.H{
+		"message": "Signout successful",
+		"email":   signoutRequest.Email,
+	})
+
 }
