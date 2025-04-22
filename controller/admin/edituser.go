@@ -112,6 +112,7 @@ func CreateAdmin(c *gin.Context, db *gorm.DB, firestoreClient *firestore.Client)
 	newUser := model.User{
 		Email:          req.Email,
 		HashedPassword: string(hashedPassword),
+		Name:           "admin",
 		Profile:        &defaultProfile,
 		Role:           "admin",
 		IsVerify:       "0",
