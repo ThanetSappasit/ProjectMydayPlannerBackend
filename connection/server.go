@@ -1,6 +1,7 @@
 package connection
 
 import (
+	"backend/controller/attachments"
 	"backend/controller/auth"
 	"backend/controller/user"
 	"log"
@@ -27,6 +28,7 @@ func StartServer() {
 	user.UserController(router, db, firestoreClient)
 	auth.UserAuthController(router, db, firestoreClient)
 	auth.UserSignController(router, db, firestoreClient)
+	attachments.AttachmentsController(router, db, firestoreClient)
 
 	router.Run()
 }

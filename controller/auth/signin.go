@@ -4,6 +4,7 @@ import (
 	"backend/dto"
 	"backend/model"
 	"net/http"
+	"time"
 
 	"cloud.google.com/go/firestore"
 	"github.com/gin-gonic/gin"
@@ -159,10 +160,31 @@ func googleSignIn(c *gin.Context, db *gorm.DB, firestoreClient *firestore.Client
 	if result.Error != nil {
 		if result.Error == gorm.ErrRecordNotFound {
 			// กรณีไม่พบผู้ใช้ในระบบ
-			// เตรียมข้อมูลสำหรับบันทึกใน Firebase
 			isActive := "1"
 			isVerify := "0"
+			profile := "none-url"
+			createAt := time.Now().UTC()
 
+			var sql = `
+				INSERT INTO user (name, email, profile, hashed_password, role, is_active, is_verify, create_at)
+				VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+			`
+			// ต้องhash - ก่อนไหม ค่อยเอาไปเช็คที่หน้าบ้าน??
+			hashedPasswordValue := "-"
+
+			result := db.Exec(sql,
+				googleSignInRequest.Name,
+				googleSignInRequest.Email,
+				profile,
+				hashedPasswordValue,
+				role,
+				isActive,
+				isVerify,
+				createAt)
+			if result.Error != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create user"})
+				return
+			}
 			firebaseData = map[string]interface{}{
 				"email":  googleSignInRequest.Email,
 				"active": isActive,
