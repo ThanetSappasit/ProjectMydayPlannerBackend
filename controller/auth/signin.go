@@ -127,10 +127,12 @@ func SignOut(c *gin.Context, db *gorm.DB, firestoreClient *firestore.Client) {
 		return
 	}
 
-	// ลบข้อมูลใน Firebase collection "usersLogin"
-	_, err := firestoreClient.Collection("usersLogin").Doc(user.Email).Delete(c)
+	// อัปเดตเฉพาะฟิลด์ login เป็น 0 ใน Firebase โดยไม่กระทบข้อมูลอื่น
+	_, err := firestoreClient.Collection("usersLogin").Doc(user.Email).Update(c, []firestore.Update{
+		{Path: "login", Value: 0},
+	})
 	if err != nil {
-		c.JSON(500, gin.H{"error": "Failed to delete Firebase user data: " + err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update login status"})
 		return
 	}
 
