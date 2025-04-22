@@ -4,6 +4,8 @@ import (
 	"backend/controller/admin"
 	"backend/controller/attachments"
 	"backend/controller/auth"
+	"backend/controller/boards"
+	"backend/controller/tasks"
 	"backend/controller/user"
 	"log"
 
@@ -31,6 +33,8 @@ func StartServer() {
 	auth.UserSignController(router, db, firestoreClient)
 	attachments.AttachmentsController(router, db, firestoreClient)
 	admin.AdminEditController(router, db, firestoreClient)
+	boards.BoardsController(router, db, firestoreClient)
+	tasks.TasksController(router, db, firestoreClient)
 
 	router.Run()
 }
