@@ -14,6 +14,9 @@ import (
 func BoardsController(router *gin.Engine, db *gorm.DB, firestoreClient *firestore.Client) {
 	routes := router.Group("/boards")
 	{
+		routes.POST("/getboards", func(c *gin.Context) {
+			GetBoards(c, db, firestoreClient)
+		})
 		routes.POST("/createboard", func(c *gin.Context) {
 			CreateBoards(c, db, firestoreClient)
 		})
@@ -82,4 +85,50 @@ func CreateBoards(c *gin.Context, db *gorm.DB, firestoreClient *firestore.Client
 		"message": "Board created successfully",
 		"boardID": newBoard.BoardID,
 	})
+}
+
+func GetBoards(c *gin.Context, db *gorm.DB, firestoreClient *firestore.Client) {
+	// Get all boards for a user
+	var boards dto.GetBoardsRequest
+	if err := c.ShouldBindJSON(&boards); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid input"})
+		return
+	}
+
+	var user model.User
+	if err := db.Where("email = ?", boards.Email).First(&user).Error; err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "User not found"})
+		return
+	}
+
+	userID := user.UserID
+	if boards.Group == "1" || boards.Group == "true" {
+		// Fetch boards where the user is a member (shared boards)
+		var sharedBoards []model.Board
+
+		if err := db.Joins("JOIN board_user ON board.board_id = board_user.board_id").
+			Where("board_user.user_id = ?", userID).
+			Preload("Creator"). // Load the creator user data
+			Find(&sharedBoards).Error; err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch shared boards"})
+			return
+		}
+
+		c.JSON(http.StatusOK, sharedBoards)
+		return
+	} else {
+		// Fetch boards created by the user but not shared with others
+		var personalBoards []model.Board
+
+		if err := db.Where("create_by = ?", userID).
+			Where("board_id NOT IN (SELECT board_id FROM board_user)").
+			Preload("Creator"). // Load the creator user data
+			Find(&personalBoards).Error; err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch personal boards"})
+			return
+		}
+
+		c.JSON(http.StatusOK, personalBoards)
+		return
+	}
 }
