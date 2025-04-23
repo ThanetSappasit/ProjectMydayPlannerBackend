@@ -21,9 +21,9 @@ func InitFirestoreClient() (*firestore.Client, error) {
 	}
 
 	// Get service account path from ENV
-	credsFile := os.Getenv("GOOGLE_APPLICATION_CREDENTIALS")
+	credsFile := os.Getenv("GOOGLE_APPLICATION_CREDENTIALS_1")
 	if credsFile == "" {
-		return nil, fmt.Errorf("GOOGLE_APPLICATION_CREDENTIALS is not set in the environment")
+		return nil, fmt.Errorf("GOOGLE_APPLICATION_CREDENTIALS_1 is not set in the environment")
 	}
 
 	// Initialize Firebase with Service Account credentials
