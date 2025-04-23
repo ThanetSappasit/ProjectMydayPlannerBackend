@@ -35,6 +35,7 @@ func StartServer() {
 	admin.AdminEditController(router, db, firestoreClient)
 	boards.BoardsController(router, db, firestoreClient)
 	tasks.TasksController(router, db, firestoreClient)
+	auth.CaptchaController(router, db, firestoreClient)
 
 	router.Run()
 }

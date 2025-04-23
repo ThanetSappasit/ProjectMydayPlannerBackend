@@ -10,6 +10,8 @@ require (
 	cloud.google.com/go/firestore v1.18.0 // indirect
 	cloud.google.com/go/iam v1.2.2 // indirect
 	cloud.google.com/go/longrunning v0.6.2 // indirect
+	cloud.google.com/go/recaptchaenterprise v1.3.1 // indirect
+	cloud.google.com/go/recaptchaenterprise/v2 v2.19.0 // indirect
 	cloud.google.com/go/storage v1.43.0 // indirect
 	dario.cat/mergo v1.0.1 // indirect
 	firebase.google.com/go v3.13.0+incompatible // indirect
