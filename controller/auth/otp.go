@@ -5,6 +5,7 @@ import (
 	"backend/model"
 	"context"
 	"fmt"
+	"log"
 	"math/rand"
 	"net/http"
 	"net/smtp"
@@ -93,7 +94,7 @@ func RequestResetpasswordOTP(c *gin.Context, db *gorm.DB, firestoreClient *fires
 	}
 
 	// บันทึกข้อมูล OTP ลงใน Firebase
-	err = saveOTPRecord(c, firestoreClient, emailRequest.Email, otp, ref)
+	err = saveOTPRecord(c, firestoreClient, emailRequest.Email, otp, ref, "resetpassword")
 	if err != nil {
 		c.JSON(500, gin.H{"error": "Failed to save OTP record: " + err.Error()})
 		return
@@ -120,6 +121,28 @@ func RequestVerifyOTP(c *gin.Context, db *gorm.DB, firestoreClient *firestore.Cl
 		return
 	}
 
+	// ตรวจสอบว่าอีเมลถูกบล็อกหรือไม่
+	blocked, err := isEmailBlocked(c, firestoreClient, emailRequest.Email)
+	if err != nil {
+		c.JSON(500, gin.H{"error": "Failed to check email status"})
+		return
+	}
+	if blocked {
+		c.JSON(403, gin.H{"error": "Too many OTP requests. Please try again later."})
+		return
+	}
+
+	// ตรวจสอบจำนวนครั้งที่ขอ OTP และบล็อกถ้าเกินกำหนด
+	shouldBlock, err := checkAndBlockIfNeeded(c, firestoreClient, emailRequest.Email)
+	if err != nil {
+		c.JSON(500, gin.H{"error": "Failed to check OTP request count"})
+		return
+	}
+	if shouldBlock {
+		c.JSON(403, gin.H{"error": "Too many OTP requests. Your email has been blocked temporarily."})
+		return
+	}
+
 	// สร้าง OTP และ REF
 	otp, err := generateOTP(6)
 	if err != nil {
@@ -138,27 +161,10 @@ func RequestVerifyOTP(c *gin.Context, db *gorm.DB, firestoreClient *firestore.Cl
 		return
 	}
 
-	expirationTime := time.Now().Add(15 * time.Minute)
-	otpRecord := model.OTPRecord{
-		Email:     emailRequest.Email,
-		OTP:       otp,
-		Reference: ref,
-		Is_used:   "0",
-		CreatedAt: time.Now(),
-		ExpiresAt: expirationTime,
-	}
-	otpData := map[string]interface{}{
-		"email":     otpRecord.Email,
-		"otp":       otpRecord.OTP,
-		"reference": otpRecord.Reference,
-		"is_used":   otpRecord.Is_used,
-		"createdAt": otpRecord.CreatedAt,
-		"expiresAt": otpRecord.ExpiresAt,
-	}
-
-	_, err = firestoreClient.Collection("OTPRecords").Doc(ref).Set(c, otpData)
+	// บันทึกข้อมูล OTP ลงใน Firebase
+	err = saveOTPRecord(c, firestoreClient, emailRequest.Email, otp, ref, "verify")
 	if err != nil {
-		c.JSON(500, gin.H{"error": "Failed to save OTP record to Firebase: " + err.Error()})
+		c.JSON(500, gin.H{"error": "Failed to save OTP record: " + err.Error()})
 		return
 	}
 
@@ -173,19 +179,28 @@ func VerifyOTP(c *gin.Context, db *gorm.DB, firestoreClient *firestore.Client) {
 	var verifyRequest dto.VerifyRequest
 
 	if err := c.ShouldBindJSON(&verifyRequest); err != nil {
-		c.JSON(400, gin.H{"error": "Invalid request format"})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request format"})
+		return
+	}
+
+	// ตรวจสอบว่า input ไม่เป็นค่าว่าง
+	if verifyRequest.Record == "" || verifyRequest.Reference == "" || verifyRequest.OTP == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Record, Reference and OTP are required"})
 		return
 	}
 
 	// ดึงข้อมูล OTP จาก Firebase โดยใช้ reference
-	docRef := firestoreClient.Collection("OTPRecords").Doc(verifyRequest.Reference)
-	docSnap, err := docRef.Get(c)
+	ctx := c.Request.Context() // ใช้ context จาก request แทนการส่ง c ไปโดยตรง
+	collectionName := fmt.Sprintf("OTPRecords_%s", verifyRequest.Record)
+	docRef := firestoreClient.Collection(collectionName).Doc(verifyRequest.Reference)
+	docSnap, err := docRef.Get(ctx)
 
 	if err != nil {
 		if status.Code(err) == codes.NotFound {
-			c.JSON(404, gin.H{"error": "Invalid reference code"})
+			c.JSON(http.StatusNotFound, gin.H{"error": "Invalid reference code"})
 		} else {
-			c.JSON(500, gin.H{"error": "Failed to retrieve OTP record: " + err.Error()})
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to retrieve OTP record"})
+			log.Printf("Firestore error: %v", err) // บันทึก error ที่เกิดขึ้นโดยไม่แสดงให้ user เห็น
 		}
 		return
 	}
@@ -194,65 +209,106 @@ func VerifyOTP(c *gin.Context, db *gorm.DB, firestoreClient *firestore.Client) {
 	var otpRecord model.OTPRecord
 
 	if err := docSnap.DataTo(&otpRecord); err != nil {
-		c.JSON(500, gin.H{"error": "Failed to parse OTP record"})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to parse OTP record"})
+		log.Printf("Data parsing error: %v", err)
+		return
+	}
+
+	// ตรวจสอบว่า OTP ถูกใช้ไปแล้วหรือไม่
+	if otpRecord.Is_used == "1" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "OTP has already been used"})
 		return
 	}
 
 	// ตรวจสอบว่า OTP หมดอายุหรือยัง
 	currentTime := time.Now()
 	if currentTime.After(otpRecord.ExpiresAt) {
-		c.JSON(400, gin.H{"error": "OTP has expired"})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "OTP has expired"})
 		return
 	}
 
 	// ตรวจสอบว่า OTP ตรงกันหรือไม่
 	if otpRecord.OTP != verifyRequest.OTP {
-		c.JSON(400, gin.H{"error": "Invalid OTP"})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid OTP"})
 		return
 	}
 
-	// อัปเดตคอลัมน์ is_verify เป็น 1 ในตาราง user ของ SQL database
-	result := db.Model(&model.User{}).Where("email = ?", otpRecord.Email).Update("is_verify", 1)
+	// เริ่ม transaction สำหรับการอัปเดต SQL database (ถ้าจำเป็น)
+	tx := db.Begin()
+	defer func() {
+		if r := recover(); r != nil {
+			tx.Rollback()
+		}
+	}()
 
-	if result.Error != nil {
-		c.JSON(500, gin.H{"error": "Failed to update user verification status: " + result.Error.Error()})
+	if err := tx.Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to start transaction"})
+		log.Printf("Transaction error: %v", err)
 		return
 	}
 
-	if result.RowsAffected == 0 {
-		c.JSON(404, gin.H{"error": "User not found"})
-		return
-	}
-
-	// เตรียมข้อมูลสำหรับบันทึกหรืออัปเดตใน Firebase
-	role := "user"
-	isActive := "1"
-	isVerify := "1"
-
-	firebaseData := map[string]interface{}{
-		"email":  otpRecord.Email,
-		"active": isActive,
-		"verify": isVerify,
-		"login":  1,
-		"role":   role,
-	}
-
-	_, err = firestoreClient.Collection("OTPRecords").Doc(verifyRequest.Reference).Update(c, []firestore.Update{
+	// อัปเดตสถานะ OTP ว่าถูกใช้แล้ว
+	_, err = firestoreClient.Collection(collectionName).Doc(verifyRequest.Reference).Update(ctx, []firestore.Update{
 		{Path: "is_used", Value: 1},
 	})
+
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update login status"})
+		tx.Rollback()
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update OTP status"})
+		log.Printf("Firestore update error: %v", err)
 		return
 	}
 
-	// บันทึกหรืออัปเดตข้อมูลใน Firebase collection "usersLogin"
-	_, err = firestoreClient.Collection("usersLogin").Doc(otpRecord.Email).Set(c, firebaseData, firestore.MergeAll)
-	if err != nil {
-		c.JSON(500, gin.H{"error": "Failed to update Firebase user data: " + err.Error()})
+	// เงื่อนไขพิเศษสำหรับ OTPRecords_verify
+	if collectionName == "OTPRecords_verify" {
+		// อัปเดตคอลัมน์ is_verify เป็น 1 ในตาราง user ของ SQL database
+		result := tx.Model(&model.User{}).Where("email = ?", otpRecord.Email).Update("is_verify", 1)
+
+		if result.Error != nil {
+			tx.Rollback()
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update user verification status"})
+			log.Printf("DB update error: %v", result.Error)
+			return
+		}
+
+		if result.RowsAffected == 0 {
+			tx.Rollback()
+			c.JSON(http.StatusNotFound, gin.H{"error": "User not found"})
+			return
+		}
+
+		// เฉพาะกรณี verify เท่านั้นที่จะบันทึกข้อมูลลงใน usersLogin
+		// เตรียมข้อมูลสำหรับบันทึกหรืออัปเดตใน Firebase
+		role := "user"
+		isActive := "1"
+		isVerify := "1"
+
+		// บันทึกหรืออัปเดตข้อมูลใน Firebase collection "usersLogin"
+		_, err = firestoreClient.Collection("usersLogin").Doc(otpRecord.Email).Set(ctx, map[string]interface{}{
+			"email":      otpRecord.Email,
+			"active":     isActive,
+			"verify":     isVerify,
+			"login":      1,
+			"role":       role,
+			"updated_at": time.Now(),
+		}, firestore.MergeAll)
+
+		if err != nil {
+			tx.Rollback()
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update Firebase user data"})
+			log.Printf("Firestore set error: %v", err)
+			return
+		}
+	}
+
+	// commit transaction หากทุกอย่างเรียบร้อย
+	if err := tx.Commit().Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to commit transaction"})
+		log.Printf("Transaction commit error: %v", err)
 		return
 	}
 
-	c.JSON(200, gin.H{
+	c.JSON(http.StatusOK, gin.H{
 		"message": "OTP verified successfully",
 		"email":   otpRecord.Email,
 	})
@@ -569,7 +625,7 @@ func blockEmail(c context.Context, firestoreClient *firestore.Client, email stri
 }
 
 // ฟังก์ชันบันทึกข้อมูล OTP ลงใน Firebase
-func saveOTPRecord(c context.Context, firestoreClient *firestore.Client, email, otp, ref string) error {
+func saveOTPRecord(c context.Context, firestoreClient *firestore.Client, email, otp, ref string, record string) error {
 	expirationTime := time.Now().Add(15 * time.Minute)
 	otpData := map[string]interface{}{
 		"email":     email,
@@ -580,6 +636,7 @@ func saveOTPRecord(c context.Context, firestoreClient *firestore.Client, email, 
 		"expiresAt": expirationTime,
 	}
 
-	_, err := firestoreClient.Collection("OTPRecords").Doc(ref).Set(c, otpData)
+	collectionName := fmt.Sprintf("OTPRecords_%s", record)
+	_, err := firestoreClient.Collection(collectionName).Doc(ref).Set(c, otpData)
 	return err
 }
