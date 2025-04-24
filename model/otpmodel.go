@@ -19,6 +19,7 @@ type OTPRecord struct {
 	Email     string    `gorm:"not null;index"`  // Email associated with OTP
 	OTP       string    `gorm:"not null"`        // OTP code
 	Reference string    `gorm:"not null;unique"` // Unique reference code
+	Is_used   string    `gorm:"not null"`        // Indicates if OTP is used
 	CreatedAt time.Time `gorm:"autoCreateTime"`
 	ExpiresAt time.Time `gorm:"not null"` // OTP expiration time
 }

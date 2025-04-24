@@ -24,7 +24,7 @@ func StartServer() {
 		log.Fatalf("Failed to initialize Firestore client: %v", err)
 	}
 
-	router.GET("/status", func(c *gin.Context) {
+	router.GET("/", func(c *gin.Context) {
 		c.JSON(200, gin.H{"message": "Api is running!"})
 	})
 

@@ -3,8 +3,10 @@ package auth
 import (
 	"backend/dto"
 	"backend/model"
+	"context"
 	"fmt"
 	"math/rand"
+	"net/http"
 	"net/smtp"
 	"os"
 	"strings"
@@ -16,6 +18,7 @@ import (
 	"cloud.google.com/go/firestore"
 	"github.com/gin-gonic/gin"
 	"github.com/joho/godotenv"
+	"google.golang.org/api/iterator"
 	"gorm.io/gorm"
 )
 
@@ -49,6 +52,28 @@ func RequestResetpasswordOTP(c *gin.Context, db *gorm.DB, firestoreClient *fires
 		return
 	}
 
+	// ตรวจสอบว่าอีเมลถูกบล็อกหรือไม่
+	blocked, err := isEmailBlocked(c, firestoreClient, emailRequest.Email)
+	if err != nil {
+		c.JSON(500, gin.H{"error": "Failed to check email status"})
+		return
+	}
+	if blocked {
+		c.JSON(403, gin.H{"error": "Too many OTP requests. Please try again later."})
+		return
+	}
+
+	// ตรวจสอบจำนวนครั้งที่ขอ OTP และบล็อกถ้าเกินกำหนด
+	shouldBlock, err := checkAndBlockIfNeeded(c, firestoreClient, emailRequest.Email)
+	if err != nil {
+		c.JSON(500, gin.H{"error": "Failed to check OTP request count"})
+		return
+	}
+	if shouldBlock {
+		c.JSON(403, gin.H{"error": "Too many OTP requests. Your email has been blocked temporarily."})
+		return
+	}
+
 	// สร้าง OTP และ REF
 	otp, err := generateOTP(6)
 	if err != nil {
@@ -67,25 +92,10 @@ func RequestResetpasswordOTP(c *gin.Context, db *gorm.DB, firestoreClient *fires
 		return
 	}
 
-	expirationTime := time.Now().Add(15 * time.Minute)
-	otpRecord := model.OTPRecord{
-		Email:     emailRequest.Email,
-		OTP:       otp,
-		Reference: ref,
-		CreatedAt: time.Now(),
-		ExpiresAt: expirationTime,
-	}
-	otpData := map[string]interface{}{
-		"email":     otpRecord.Email,
-		"otp":       otpRecord.OTP,
-		"reference": otpRecord.Reference,
-		"createdAt": otpRecord.CreatedAt,
-		"expiresAt": otpRecord.ExpiresAt,
-	}
-
-	_, err = firestoreClient.Collection("OTPRecords").Doc(ref).Set(c, otpData)
+	// บันทึกข้อมูล OTP ลงใน Firebase
+	err = saveOTPRecord(c, firestoreClient, emailRequest.Email, otp, ref)
 	if err != nil {
-		c.JSON(500, gin.H{"error": "Failed to save OTP record to Firebase: " + err.Error()})
+		c.JSON(500, gin.H{"error": "Failed to save OTP record: " + err.Error()})
 		return
 	}
 
@@ -133,6 +143,7 @@ func RequestVerifyOTP(c *gin.Context, db *gorm.DB, firestoreClient *firestore.Cl
 		Email:     emailRequest.Email,
 		OTP:       otp,
 		Reference: ref,
+		Is_used:   "0",
 		CreatedAt: time.Now(),
 		ExpiresAt: expirationTime,
 	}
@@ -140,6 +151,7 @@ func RequestVerifyOTP(c *gin.Context, db *gorm.DB, firestoreClient *firestore.Cl
 		"email":     otpRecord.Email,
 		"otp":       otpRecord.OTP,
 		"reference": otpRecord.Reference,
+		"is_used":   otpRecord.Is_used,
 		"createdAt": otpRecord.CreatedAt,
 		"expiresAt": otpRecord.ExpiresAt,
 	}
@@ -223,6 +235,14 @@ func VerifyOTP(c *gin.Context, db *gorm.DB, firestoreClient *firestore.Client) {
 		"verify": isVerify,
 		"login":  1,
 		"role":   role,
+	}
+
+	_, err = firestoreClient.Collection("OTPRecords").Doc(verifyRequest.Reference).Update(c, []firestore.Update{
+		{Path: "is_used", Value: 1},
+	})
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update login status"})
+		return
 	}
 
 	// บันทึกหรืออัปเดตข้อมูลใน Firebase collection "usersLogin"
@@ -447,4 +467,119 @@ func sendEmail(to, subject, body string) error {
 
 	fmt.Println("Email sent successfully")
 	return nil
+}
+
+// ฟังก์ชันตรวจสอบว่าอีเมลถูกบล็อกหรือไม่
+func isEmailBlocked(c context.Context, firestoreClient *firestore.Client, email string) (bool, error) {
+	blockedRef := firestoreClient.Collection("EmailBlocked").Doc(email)
+	blockedDoc, err := blockedRef.Get(c)
+
+	// ถ้าไม่พบข้อมูล แสดงว่าไม่ถูกบล็อก
+	if err != nil {
+		if status.Code(err) == codes.NotFound {
+			return false, nil
+		}
+		return false, err
+	}
+
+	// ถ้าพบข้อมูล ตรวจสอบว่าหมดเวลาบล็อกหรือยัง
+	if blockedDoc.Exists() {
+		blockData := blockedDoc.Data()
+		expiresAt, ok := blockData["expiresAt"].(time.Time)
+		if ok {
+			// ถ้ายังไม่หมดเวลา ถือว่ายังถูกบล็อกอยู่
+			if time.Now().Before(expiresAt) {
+				return true, nil
+			}
+
+			// ถ้าหมดเวลาแล้ว ลบออกจาก EmailBlocked
+			_, err = blockedRef.Delete(c)
+			if err != nil {
+				return false, err
+			}
+		}
+	}
+
+	return false, nil
+}
+
+// ฟังก์ชันตรวจสอบจำนวนครั้งที่ขอ OTP และบล็อกถ้าเกินกำหนด
+func checkAndBlockIfNeeded(c context.Context, firestoreClient *firestore.Client, email string) (bool, error) {
+	// ค้นหารายการ OTP ที่มีอีเมลตรงกัน
+	query := firestoreClient.Collection("OTPRecords").Where("email", "==", email)
+	iter := query.Documents(c)
+	defer iter.Stop()
+
+	var otpCount int
+	currentTime := time.Now()
+
+	for {
+		doc, err := iter.Next()
+		if err == iterator.Done {
+			break
+		}
+		if err != nil {
+			return false, err
+		}
+
+		// ดึงข้อมูลจากเอกสาร
+		data := doc.Data()
+
+		// ตรวจสอบว่ามีฟิลด์ expiresAt หรือไม่
+		expiresAt, ok := data["expiresAt"].(time.Time)
+		if !ok {
+			// ถ้าไม่มีวันหมดอายุหรือรูปแบบไม่ถูกต้อง ให้นับว่าใช้ได้อยู่
+			otpCount++
+			continue
+		}
+
+		// ตรวจสอบว่ายังไม่หมดอายุหรือไม่
+		if currentTime.Before(expiresAt) {
+			otpCount++
+		}
+	}
+
+	// ถ้าจำนวน OTP ที่ยังไม่หมดอายุมากกว่า 3 รายการ ให้บล็อกอีเมล
+	if otpCount >= 3 {
+		err := blockEmail(c, firestoreClient, email)
+		if err != nil {
+			return false, err
+		}
+		return true, nil
+	}
+
+	return false, nil
+}
+
+// ฟังก์ชันบล็อกอีเมล
+func blockEmail(c context.Context, firestoreClient *firestore.Client, email string) error {
+	blockTime := time.Now()
+	expireTime := blockTime.Add(10 * time.Minute)
+
+	blockData := map[string]interface{}{
+		"email":     email,
+		"createdAt": blockTime,
+		"expiresAt": expireTime,
+	}
+
+	_, err := firestoreClient.Collection("EmailBlocked").Doc(email).Set(c, blockData)
+
+	return err
+
+}
+
+// ฟังก์ชันบันทึกข้อมูล OTP ลงใน Firebase
+func saveOTPRecord(c context.Context, firestoreClient *firestore.Client, email, otp, ref string) error {
+	expirationTime := time.Now().Add(15 * time.Minute)
+	otpData := map[string]interface{}{
+		"email":     email,
+		"otp":       otp,
+		"reference": ref,
+		"is_used":   "0",
+		"createdAt": time.Now(),
+		"expiresAt": expirationTime,
+	}
+
+	_, err := firestoreClient.Collection("OTPRecords").Doc(ref).Set(c, otpData)
+	return err
 }
