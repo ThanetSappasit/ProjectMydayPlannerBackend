@@ -54,7 +54,7 @@ func RequestResetpasswordOTP(c *gin.Context, db *gorm.DB, firestoreClient *fires
 	}
 
 	// ตรวจสอบว่าอีเมลถูกบล็อกหรือไม่
-	blocked, err := isEmailBlocked(c, firestoreClient, emailRequest.Email)
+	blocked, err := isEmailBlocked(c, firestoreClient, emailRequest.Email, "resetpassword")
 	if err != nil {
 		c.JSON(500, gin.H{"error": "Failed to check email status"})
 		return
@@ -65,7 +65,7 @@ func RequestResetpasswordOTP(c *gin.Context, db *gorm.DB, firestoreClient *fires
 	}
 
 	// ตรวจสอบจำนวนครั้งที่ขอ OTP และบล็อกถ้าเกินกำหนด
-	shouldBlock, err := checkAndBlockIfNeeded(c, firestoreClient, emailRequest.Email)
+	shouldBlock, err := checkAndBlockIfNeeded(c, firestoreClient, emailRequest.Email, "resetpassword")
 	if err != nil {
 		c.JSON(500, gin.H{"error": "Failed to check OTP request count"})
 		return
@@ -122,7 +122,7 @@ func RequestVerifyOTP(c *gin.Context, db *gorm.DB, firestoreClient *firestore.Cl
 	}
 
 	// ตรวจสอบว่าอีเมลถูกบล็อกหรือไม่
-	blocked, err := isEmailBlocked(c, firestoreClient, emailRequest.Email)
+	blocked, err := isEmailBlocked(c, firestoreClient, emailRequest.Email, "verify")
 	if err != nil {
 		c.JSON(500, gin.H{"error": "Failed to check email status"})
 		return
@@ -133,7 +133,7 @@ func RequestVerifyOTP(c *gin.Context, db *gorm.DB, firestoreClient *firestore.Cl
 	}
 
 	// ตรวจสอบจำนวนครั้งที่ขอ OTP และบล็อกถ้าเกินกำหนด
-	shouldBlock, err := checkAndBlockIfNeeded(c, firestoreClient, emailRequest.Email)
+	shouldBlock, err := checkAndBlockIfNeeded(c, firestoreClient, emailRequest.Email, "verify")
 	if err != nil {
 		c.JSON(500, gin.H{"error": "Failed to check OTP request count"})
 		return
@@ -526,8 +526,9 @@ func sendEmail(to, subject, body string) error {
 }
 
 // ฟังก์ชันตรวจสอบว่าอีเมลถูกบล็อกหรือไม่
-func isEmailBlocked(c context.Context, firestoreClient *firestore.Client, email string) (bool, error) {
-	blockedRef := firestoreClient.Collection("EmailBlocked").Doc(email)
+func isEmailBlocked(c context.Context, firestoreClient *firestore.Client, email string, record string) (bool, error) {
+	collectionName := fmt.Sprintf("OTPRecords_%s", record)
+	blockedRef := firestoreClient.Collection(collectionName).Doc(email)
 	blockedDoc, err := blockedRef.Get(c)
 
 	// ถ้าไม่พบข้อมูล แสดงว่าไม่ถูกบล็อก
@@ -560,9 +561,10 @@ func isEmailBlocked(c context.Context, firestoreClient *firestore.Client, email 
 }
 
 // ฟังก์ชันตรวจสอบจำนวนครั้งที่ขอ OTP และบล็อกถ้าเกินกำหนด
-func checkAndBlockIfNeeded(c context.Context, firestoreClient *firestore.Client, email string) (bool, error) {
+func checkAndBlockIfNeeded(c context.Context, firestoreClient *firestore.Client, email string, record string) (bool, error) {
 	// ค้นหารายการ OTP ที่มีอีเมลตรงกัน
-	query := firestoreClient.Collection("OTPRecords").Where("email", "==", email)
+	collectionName := fmt.Sprintf("OTPRecords_%s", record)
+	query := firestoreClient.Collection(collectionName).Where("email", "==", email)
 	iter := query.Documents(c)
 	defer iter.Stop()
 
