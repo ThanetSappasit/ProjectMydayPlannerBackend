@@ -223,6 +223,15 @@ func UpdateProfileUser(c *gin.Context, db *gorm.DB, firestoreClient *firestore.C
 		}
 		return
 	}
+	if updateProfile.ProfileData.HashedPassword != "" {
+		hashedPassword, err := bcrypt.GenerateFromPassword([]byte(updateProfile.ProfileData.HashedPassword), bcrypt.DefaultCost)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to hash password"})
+			return
+		}
+		updateProfile.ProfileData.HashedPassword = string(hashedPassword)
+	}
+
 	updates := map[string]interface{}{
 		"name":            updateProfile.ProfileData.Name,
 		"hashed_password": updateProfile.ProfileData.HashedPassword,
