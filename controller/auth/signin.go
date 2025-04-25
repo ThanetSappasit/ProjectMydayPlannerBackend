@@ -74,8 +74,11 @@ func SignIn(c *gin.Context, db *gorm.DB, firestoreClient *firestore.Client) {
 		return
 	}
 
-	// เตรียมข้อมูลสำหรับบันทึกใน Firebase
 	role := "user"
+	if user.Role == "admin" {
+		role = user.Role
+	}
+	// เตรียมข้อมูลสำหรับบันทึกใน Firebase
 	isActive := "1"
 	isVerify := "1"
 
