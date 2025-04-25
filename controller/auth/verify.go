@@ -99,7 +99,7 @@ func VerifyOTP(c *gin.Context, db *gorm.DB, firestoreClient *firestore.Client) {
 
 	// อัปเดตสถานะ OTP ว่าถูกใช้แล้ว
 	_, err = firestoreClient.Collection(collectionName).Doc(verifyRequest.Reference).Update(ctx, []firestore.Update{
-		{Path: "is_used", Value: 1},
+		{Path: "is_used", Value: "1"},
 	})
 
 	if err != nil {
