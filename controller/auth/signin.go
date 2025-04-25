@@ -160,6 +160,9 @@ func googleSignIn(c *gin.Context, db *gorm.DB, firestoreClient *firestore.Client
 
 	var firebaseData map[string]interface{}
 	role := "user"
+	if user.Role == "admin" {
+		role = user.Role
+	}
 
 	// เงื่อนไขที่ 1: ไม่เจอข้อมูลในระบบ
 	if result.Error != nil {
