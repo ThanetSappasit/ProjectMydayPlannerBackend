@@ -164,7 +164,6 @@ func googleSignIn(c *gin.Context, db *gorm.DB, firestoreClient *firestore.Client
 			// กรณีไม่พบผู้ใช้ในระบบ
 			isActive := "1"
 			isVerify := "0"
-			profile := "none-url"
 			createAt := time.Now().UTC()
 
 			var sql = `
@@ -177,7 +176,7 @@ func googleSignIn(c *gin.Context, db *gorm.DB, firestoreClient *firestore.Client
 			result := db.Exec(sql,
 				googleSignInRequest.Name,
 				googleSignInRequest.Email,
-				profile,
+				googleSignInRequest.Profile,
 				hashedPasswordValue,
 				role,
 				isActive,
