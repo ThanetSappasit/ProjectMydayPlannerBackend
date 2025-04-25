@@ -8,6 +8,7 @@ type CreateAccUserRequest struct {
 	Name           string `json:"name" binding:"required"`
 	Email          string `json:"email" binding:"required,email"`
 	HashedPassword string `json:"hashed_password"`
+	Role           string `json:"role"`
 }
 
 type DeleteUserRequest struct {

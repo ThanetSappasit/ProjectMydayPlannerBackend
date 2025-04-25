@@ -87,6 +87,10 @@ func CreateAccUser(c *gin.Context, db *gorm.DB, firestoreClient *firestore.Clien
 
 	// Set default values for attributes not provided in the request
 	role := "user"
+	if userRequest.Role == "admin" {
+		role = userRequest.Role
+	}
+
 	isActive := "1"
 	isVerify := "0"
 	profile := "none-url"
