@@ -37,6 +37,8 @@ func StartServer() {
 	tasks.TasksController(router, db, firestoreClient)
 	auth.CaptchaController(router, db, firestoreClient)
 	auth.VerifyController(router, db, firestoreClient)
+	user.CreateUserController(router, db, firestoreClient)
+	user.AllDataUserController(router, db, firestoreClient)
 
 	router.Run()
 }

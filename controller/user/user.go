@@ -3,9 +3,7 @@ package user
 import (
 	"backend/dto"
 	"backend/model"
-	"context"
 	"net/http"
-	"time"
 
 	"cloud.google.com/go/firestore"
 	"github.com/gin-gonic/gin"
@@ -21,9 +19,6 @@ func UserController(router *gin.Engine, db *gorm.DB, firestoreClient *firestore.
 		})
 		routes.POST("/getemail", func(c *gin.Context) {
 			GetUserByEmail(c, db, firestoreClient)
-		})
-		routes.POST("/createaccount", func(c *gin.Context) {
-			CreateAccUser(c, db, firestoreClient)
 		})
 		routes.POST("/resetpassword", func(c *gin.Context) {
 			ResetPassword(c, db, firestoreClient)
@@ -69,98 +64,6 @@ func GetUserByEmail(c *gin.Context, db *gorm.DB, firestoreClient *firestore.Clie
 		}
 	}
 	c.JSON(http.StatusOK, user)
-}
-
-func CreateAccUser(c *gin.Context, db *gorm.DB, firestoreClient *firestore.Client) {
-	var userRequest dto.CreateAccUserRequest
-	if err := c.ShouldBindJSON(&userRequest); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request"})
-		return
-	}
-
-	var user model.User
-	result := db.Where("email = ?", userRequest.Email).First(&user)
-	if result.RowsAffected > 0 {
-		c.JSON(http.StatusConflict, gin.H{"error": "Email already exists"})
-		return
-	}
-
-	// Set default values for attributes not provided in the request
-	role := "user"
-	isActive := "1"
-	isVerify := "0"
-	profile := "none-url"
-	createAt := time.Now().UTC()
-
-	firebasedata := map[string]interface{}{
-		"email":  userRequest.Email,
-		"active": isActive,
-		"verify": isVerify,
-		"login":  1,
-		"role":   role,
-	}
-
-	var hashedPasswordValue string
-
-	if userRequest.HashedPassword == "" {
-		var sql = `
-			INSERT INTO user (name, email, profile, hashed_password, role, is_active, is_verify, create_at)
-			VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-		`
-		// ต้องhash - ก่อนไหม ค่อยเอาไปเช็คที่หน้าบ้าน??
-		hashedPasswordValue = "-"
-
-		result := db.Exec(sql,
-			userRequest.Name,
-			userRequest.Email,
-			profile,
-			hashedPasswordValue,
-			role,
-			isActive,
-			isVerify,
-			createAt)
-		if result.Error != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create user"})
-			return
-		}
-		_, err := firestoreClient.Collection("usersLogin").Doc(userRequest.Email).Set(context.Background(), firebasedata)
-		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create user in Firestore"})
-			return
-		}
-	} else {
-		hashedPasswordValue, err := bcrypt.GenerateFromPassword([]byte(userRequest.HashedPassword), bcrypt.DefaultCost)
-		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to hash password"})
-			return
-		}
-		userRequest.HashedPassword = string(hashedPasswordValue)
-
-		var sql = `
-                INSERT INTO user (name, email, hashed_password, profile, role, is_active, is_verify, create_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-            `
-		result := db.Exec(sql,
-			userRequest.Name,
-			userRequest.Email,
-			hashedPasswordValue,
-			profile,
-			role,
-			isActive,
-			isVerify,
-			createAt)
-
-		if result.Error != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create user"})
-			return
-		}
-		_, err = firestoreClient.Collection("usersLogin").Doc(userRequest.Email).Set(context.Background(), firebasedata)
-		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create user in Firestore"})
-			return
-		}
-	}
-	c.JSON(http.StatusCreated, gin.H{"status": "success", "message": "User created successfully"})
 }
 
 func DeleteUser(c *gin.Context, db *gorm.DB, firestoreClient *firestore.Client) {
