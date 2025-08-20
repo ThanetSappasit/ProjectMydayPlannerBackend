@@ -33,7 +33,7 @@ func OTPController(router *gin.Engine, firestoreClient *firestore.Client) {
 		routes.POST("/resendotp", func(c *gin.Context) {
 			ResendOTP(c, firestoreClient)
 		})
-		routes.POST("/verifyOTP", func(c *gin.Context) {
+		routes.PUT("/verifyOTP", func(c *gin.Context) {
 			VerifyOTP(c, firestoreClient)
 		})
 		routes.POST("/newaccesstoken", middleware.RefreshTokenMiddleware(), func(c *gin.Context) {
