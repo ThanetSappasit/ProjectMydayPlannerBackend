@@ -30,6 +30,7 @@ func StartServer() {
 	auth.OTPController(router, fb)
 	auth.CaptchaController(router, fb)
 	auth.SignUpGetEmailController(router, fb)
+	auth.GoogleSignInController(router, fb)
 
 	user.UserController(router, fb)
 

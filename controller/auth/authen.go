@@ -42,9 +42,6 @@ func OTPController(router *gin.Engine, firestoreClient *firestore.Client) {
 		routes.PUT("/resetpassword", func(c *gin.Context) {
 			ResetPassword(c, firestoreClient)
 		})
-		// routes.POST("/googlelogin", func(c *gin.Context) {
-		// 	GoogleSignIn(c, firestoreClient)
-		// })
 	}
 }
 

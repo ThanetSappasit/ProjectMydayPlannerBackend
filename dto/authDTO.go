@@ -52,3 +52,9 @@ type ResetPasswordRequest struct {
 	Email    string `json:"email" binding:"required,email"`
 	Password string `json:"password" binding:"required"`
 }
+
+type GoogleSignInRequest struct {
+	Email   string `json:"email" binding:"required"`
+	Name    string `json:"name"`
+	Profile string `json:"profile"`
+}
