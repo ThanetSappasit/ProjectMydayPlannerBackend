@@ -56,3 +56,21 @@ func GetUserData(ctx context.Context, firestoreClient *firestore.Client, email s
 	// คืน DocumentSnapshot ของ document ที่เจอ
 	return docs[0], nil
 }
+
+func GetUserDataByUserid(ctx context.Context, firestoreClient *firestore.Client, userid string) (*firestore.DocumentSnapshot, error) {
+	usersCollection := firestoreClient.Collection("Users")
+
+	// Query หา user ตาม email
+	query := usersCollection.Where("userid", "==", userid).Limit(1)
+	docs, err := query.Documents(ctx).GetAll()
+	if err != nil {
+		return nil, err // เกิด error ระหว่าง query
+	}
+
+	if len(docs) == 0 {
+		return nil, errors.New("user not found") // email ไม่มีในระบบ
+	}
+
+	// คืน DocumentSnapshot ของ document ที่เจอ
+	return docs[0], nil
+}

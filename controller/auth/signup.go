@@ -7,6 +7,7 @@ import (
 	"myapp/model"
 	"myapp/services"
 	"net"
+	"net/http"
 	"regexp"
 	"strings"
 	"time"
@@ -20,6 +21,12 @@ import (
 func SignUpController(router *gin.Engine, firestoreClient *firestore.Client) {
 	router.POST("/auth/signup", func(c *gin.Context) {
 		Signup(c, firestoreClient)
+	})
+}
+
+func SignUpGetEmailController(router *gin.Engine, firestoreClient *firestore.Client) {
+	router.POST("/email", func(c *gin.Context) {
+		GetEmail(c, firestoreClient)
 	})
 }
 
@@ -100,4 +107,35 @@ func isValidEmail(email string) error {
 	}
 
 	return nil
+}
+
+func GetEmail(c *gin.Context, firestoreClient *firestore.Client) {
+	var emailReq dto.EmailRequest
+	if err := c.ShouldBindJSON(&emailReq); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request format"})
+		return
+	}
+
+	// Query ข้อมูลจากฐานข้อมูล
+	ctx := context.Background()
+	docSnap, err := services.GetUserData(ctx, firestoreClient, emailReq.Email)
+	if err != nil {
+		c.JSON(404, gin.H{"error": err.Error()})
+		return
+	}
+	// แปลงข้อมูลเป็น struct
+	var user model.User
+	if err := docSnap.DataTo(&user); err != nil {
+		c.JSON(500, gin.H{"error": "Failed to parse user data"})
+		return
+	}
+
+	// สร้าง response
+	response := gin.H{
+		"Email":  user.Email,
+		"UserID": user.UserID,
+	}
+
+	// ส่ง response กลับ
+	c.JSON(http.StatusOK, response)
 }

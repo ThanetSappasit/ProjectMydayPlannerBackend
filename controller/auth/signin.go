@@ -119,7 +119,6 @@ func Signin(c *gin.Context, firestoreClient *firestore.Client) {
 		"email":     request.Email,
 		"active":    user.Active,
 		"verify":    user.Verify,
-		"login":     1,
 		"role":      role,
 		"updatedat": now,
 	}

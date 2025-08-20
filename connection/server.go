@@ -2,7 +2,8 @@ package connection
 
 import (
 	"log"
-	controller "myapp/controller/auth"
+	auth "myapp/controller/auth"
+	user "myapp/controller/user"
 
 	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
@@ -22,9 +23,12 @@ func StartServer() {
 
 	router.Use(cors.Default())
 
-	controller.SignInController(router, fb)
-	controller.SignUpController(router, fb)
-	controller.OTPController(router, fb)
+	auth.SignInController(router, fb)
+	auth.SignUpController(router, fb)
+	auth.OTPController(router, fb)
+	auth.SignUpGetEmailController(router, fb)
+
+	user.UserController(router, fb)
 
 	router.Run()
 }
