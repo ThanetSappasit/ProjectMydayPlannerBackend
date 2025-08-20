@@ -3,6 +3,8 @@ package connection
 import (
 	"log"
 	auth "myapp/controller/auth"
+	board "myapp/controller/board"
+	task "myapp/controller/task"
 	user "myapp/controller/user"
 
 	"github.com/gin-contrib/cors"
@@ -30,6 +32,10 @@ func StartServer() {
 	auth.SignUpGetEmailController(router, fb)
 
 	user.UserController(router, fb)
+
+	board.CreateBoardController(router, fb)
+
+	task.CreateTaskController(router, fb)
 
 	router.Run()
 }
